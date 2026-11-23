@@ -11,7 +11,11 @@
             <category android:name="android.intent.category.LAUNCHER"/>
         </intent>
     </queries>
-    <application android:label="NOVA GAME HUB" android:supportsRtl="true"
+    <application
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:label="NOVA GAME HUB"
+        android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
