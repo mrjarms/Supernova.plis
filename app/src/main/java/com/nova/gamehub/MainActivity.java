@@ -261,6 +261,17 @@ public class MainActivity extends Activity {
                 v -> setAccent(SWATCH[0])), mt(8));
         root.addView(themeCard);
 
+        // developer credit
+        TextView dev = tv("المطور: جعفر الصادق", 14, accent);
+        dev.setTypeface(null, Typeface.BOLD);
+        dev.setGravity(Gravity.CENTER);
+        dev.setPadding(0, dp(30), 0, 0);
+        root.addView(dev);
+        TextView ver = tv("NOVA GAME HUB • v1.0", 11, MUTED);
+        ver.setGravity(Gravity.CENTER);
+        ver.setPadding(0, dp(4), 0, 0);
+        root.addView(ver);
+
         setContentView(sv);
         render();
     }
