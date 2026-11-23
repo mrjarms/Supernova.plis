@@ -1,5 +1,6 @@
 package com.nova.gamehub;
 
+import android.animation.ValueAnimator;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -7,12 +8,16 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
+import android.content.res.ColorStateList;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PixelFormat;
+import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
 import android.os.Build;
@@ -30,21 +35,33 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class OverlayService extends Service {
+    static final int DARK = 0xFF1E2A47;
+    static final int MUTED = 0xFF9BA9C5;
+
     WindowManager wm;
+    SharedPreferences sp;
+    SharedPreferences.OnSharedPreferenceChangeListener spl;
     TextView bubble, swTv, cdTv;
     Button crossBtn, swBtn, cdBtn, presetBtn;
     ScrollView panel;
     CrossView cross;
     WindowManager.LayoutParams bp, pp, cp;
     Handler h = new Handler(Looper.getMainLooper());
+    List<TextView> titles = new ArrayList<>();
+    List<SeekBar> seeks = new ArrayList<>();
     boolean panelOn, crossOn, swRun, cdRun;
-    int style = 0, size = 36, colorI = 0, ox = 0, oy = 0, presetI = 1;
-    final int[] colors = {0xFFFF3B3B, 0xFF57FF8A, 0xFF51D9E8, 0xFFFFE14D, 0xFFFFFFFF};
+    int style = 0, size = 36, colorI = 0, ox = 0, oy = 0, alpha = 100, presetI = 1;
+    int accent = 0xFF51D9E8;
+    final int[] colors = {0xFFFF3B3B, 0xFF57FF8A, 0xFF51D9E8, 0xFFFFE14D, 0xFFFFFFFF,
+            0xFFFF6BA8, 0xFFB57BFF, 0xFFFF8A3D};
     final int[] presets = {1, 5, 10, 15, 30};
     long swAcc, swStart, cdEnd, cdLeft = 5 * 60000L;
 
@@ -68,12 +85,23 @@ public class OverlayService extends Service {
             } else if (style == 2) {
                 c.drawLine(w * .1f, w * .1f, w * .9f, w * .9f, p);
                 c.drawLine(w * .9f, w * .1f, w * .1f, w * .9f, p);
-            } else {
+            } else if (style == 3) {
                 c.drawCircle(m, m, w * .42f, p);
                 p.setStyle(Paint.Style.FILL);
                 c.drawCircle(m, m, w * .07f, p);
+            } else {
+                float gap = w * .12f;
+                c.drawLine(m, 0, m, m - gap, p);
+                c.drawLine(m, m + gap, m, w, p);
+                c.drawLine(0, m, m - gap, m, p);
+                c.drawLine(m + gap, m, w, m, p);
             }
         }
+    }
+
+    abstract class Seek implements SeekBar.OnSeekBarChangeListener {
+        @Override public void onStartTrackingTouch(SeekBar s) { }
+        @Override public void onStopTrackingTouch(SeekBar s) { }
     }
 
     int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density + .5f); }
@@ -83,11 +111,26 @@ public class OverlayService extends Service {
     }
     long now() { return SystemClock.elapsedRealtime(); }
 
+    int onColor(int c) {
+        int lum = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000;
+        return lum > 150 ? 0xFF08111F : Color.WHITE;
+    }
+
     GradientDrawable bg(int c, int r) {
         GradientDrawable g = new GradientDrawable();
         g.setColor(c);
         g.setCornerRadius(dp(r));
         return g;
+    }
+
+    RippleDrawable rip(int c, int r) {
+        return new RippleDrawable(ColorStateList.valueOf(0x44FFFFFF), bg(c, r), null);
+    }
+
+    void setOn(Button b, boolean on) {
+        if (b == null) return;
+        b.setBackground(rip(on ? accent : DARK, 10));
+        b.setTextColor(on ? onColor(accent) : Color.WHITE);
     }
 
     Button btn(String t, View.OnClickListener l) {
@@ -97,10 +140,20 @@ public class OverlayService extends Service {
         b.setTextColor(Color.WHITE);
         b.setTextSize(13);
         b.setMinHeight(0);
-        b.setMinimumHeight(dp(36));
+        b.setMinimumHeight(dp(38));
         b.setPadding(dp(6), 0, dp(6), 0);
-        b.setBackground(bg(0xFF273B67, 10));
+        b.setBackground(rip(DARK, 10));
+        b.setStateListAnimator(null);
         b.setOnClickListener(l);
+        b.setOnTouchListener((v, e) -> {
+            int a = e.getAction();
+            if (a == MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(.94f).scaleY(.94f).setDuration(70).start();
+            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(110).start();
+            }
+            return false;
+        });
         return b;
     }
 
@@ -111,6 +164,25 @@ public class OverlayService extends Service {
         v.setTextColor(col);
         v.setGravity(Gravity.CENTER);
         return v;
+    }
+
+    TextView title(String t) {
+        TextView v = tv(t, 13, accent);
+        v.setTypeface(null, Typeface.BOLD);
+        v.setPadding(0, dp(8), 0, dp(2));
+        titles.add(v);
+        return v;
+    }
+
+    SeekBar seek(int max, int progress, Seek l) {
+        SeekBar s = new SeekBar(this);
+        s.setMax(max);
+        s.setProgress(progress);
+        s.setProgressTintList(ColorStateList.valueOf(accent));
+        s.setThumbTintList(ColorStateList.valueOf(accent));
+        s.setOnSeekBarChangeListener(l);
+        seeks.add(s);
+        return s;
     }
 
     LinearLayout row(View... vs) {
@@ -135,6 +207,21 @@ public class OverlayService extends Service {
 
     void init() {
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        sp = getSharedPreferences("nova", MODE_PRIVATE);
+        accent = sp.getInt("accent", accent);
+        style = sp.getInt("c_style", 0);
+        size = sp.getInt("c_size", 36);
+        colorI = sp.getInt("c_color", 0) % colors.length;
+        ox = sp.getInt("c_ox", 0);
+        oy = sp.getInt("c_oy", 0);
+        alpha = sp.getInt("c_alpha", 100);
+        spl = (s, k) -> {
+            if ("accent".equals(k)) {
+                accent = s.getInt("accent", accent);
+                h.post(this::recolor);
+            }
+        };
+        sp.registerOnSharedPreferenceChangeListener(spl);
         startFg();
         cross = new CrossView(this);
         cp = new WindowManager.LayoutParams(dp(size), dp(size), type(),
@@ -143,6 +230,7 @@ public class OverlayService extends Service {
         cp.gravity = Gravity.CENTER;
         buildBubble();
         buildPanel();
+        recolor();
         h.post(tick);
     }
 
@@ -164,16 +252,28 @@ public class OverlayService extends Service {
         else startForeground(1, n);
     }
 
+    void recolor() {
+        if (bubble == null) return;
+        bubble.setBackground(bg((accent & 0x00FFFFFF) | 0xE6000000, 26));
+        bubble.setTextColor(onColor(accent));
+        for (TextView t : titles) t.setTextColor(accent);
+        for (SeekBar s : seeks) {
+            s.setProgressTintList(ColorStateList.valueOf(accent));
+            s.setThumbTintList(ColorStateList.valueOf(accent));
+        }
+        setOn(crossBtn, crossOn);
+        setOn(swBtn, swRun);
+        setOn(cdBtn, cdRun);
+    }
+
     void buildBubble() {
         bubble = new TextView(this);
         bubble.setText("🎮");
         bubble.setTextSize(18);
-        bubble.setTextColor(Color.WHITE);
         bubble.setGravity(Gravity.CENTER);
-        bubble.setMinWidth(dp(48));
-        bubble.setMinHeight(dp(48));
+        bubble.setMinWidth(dp(52));
+        bubble.setMinHeight(dp(52));
         bubble.setPadding(dp(8), dp(4), dp(8), dp(4));
-        bubble.setBackground(bg(0xDD5868DF, 24));
         bp = new WindowManager.LayoutParams(-2, -2, type(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         bp.gravity = Gravity.TOP | Gravity.LEFT;
@@ -199,6 +299,7 @@ public class OverlayService extends Service {
                 }
                 case MotionEvent.ACTION_UP:
                     if (!mv[0]) togglePanel();
+                    else snap();
                     return true;
             }
             return false;
@@ -206,39 +307,67 @@ public class OverlayService extends Service {
         wm.addView(bubble, bp);
     }
 
+    void snap() {
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int bw = bubble.getWidth() > 0 ? bubble.getWidth() : dp(52);
+        int target = (bp.x + bw / 2 < dm.widthPixels / 2) ? 0 : dm.widthPixels - bw;
+        ValueAnimator a = ValueAnimator.ofInt(bp.x, target);
+        a.setDuration(180);
+        a.addUpdateListener(an -> {
+            bp.x = (Integer) an.getAnimatedValue();
+            try { wm.updateViewLayout(bubble, bp); } catch (Exception e) { }
+        });
+        a.start();
+    }
+
     void buildPanel() {
         panel = new ScrollView(this);
-        panel.setBackground(bg(0xF2101828, 16));
+        panel.setBackground(bg(0xF2101828, 18));
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
-        c.setPadding(dp(8), dp(8), dp(8), dp(8));
+        c.setPadding(dp(10), dp(8), dp(10), dp(10));
         c.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
 
+        c.addView(title("المؤشر"));
         crossBtn = btn("المؤشر: إيقاف", v -> { crossOn = !crossOn; applyCross(); });
-        c.addView(tv("المؤشر", 13, 0xFF51D9E8));
         c.addView(crossBtn);
-        c.addView(row(btn("الشكل", v -> { style = (style + 1) % 4; applyCross(); }),
+        c.addView(row(btn("الشكل", v -> { style = (style + 1) % 5; applyCross(); }),
                 btn("اللون", v -> { colorI = (colorI + 1) % colors.length; applyCross(); })));
-        c.addView(row(btn("−", v -> { size = Math.max(16, size - 6); applyCross(); }),
-                btn("+", v -> { size = Math.min(140, size + 6); applyCross(); })));
-        c.addView(row(btn("◀", v -> { ox -= 4; applyCross(); }), btn("▶", v -> { ox += 4; applyCross(); }),
-                btn("▲", v -> { oy -= 4; applyCross(); }), btn("▼", v -> { oy += 4; applyCross(); })));
+        c.addView(tv("الحجم", 11, MUTED));
+        c.addView(seek(124, size - 16, new Seek() {
+            @Override
+            public void onProgressChanged(SeekBar s, int p, boolean user) {
+                if (user) { size = 16 + p; applyCross(); }
+            }
+        }));
+        c.addView(tv("الشفافية", 11, MUTED));
+        c.addView(seek(80, alpha - 20, new Seek() {
+            @Override
+            public void onProgressChanged(SeekBar s, int p, boolean user) {
+                if (user) { alpha = 20 + p; applyCross(); }
+            }
+        }));
+        c.addView(tv("تحريك المؤشر", 11, MUTED));
+        c.addView(row(btn("◀", v -> { ox -= 3; applyCross(); }), btn("▶", v -> { ox += 3; applyCross(); }),
+                btn("▲", v -> { oy -= 3; applyCross(); }), btn("▼", v -> { oy += 3; applyCross(); })));
+        c.addView(btn("↺ توسيط", v -> { ox = 0; oy = 0; applyCross(); }));
 
-        c.addView(tv("ميقاتي", 13, 0xFF51D9E8));
+        c.addView(title("ميقاتي"));
         swTv = tv("00:00.00", 24, Color.WHITE);
         c.addView(swTv);
         swBtn = btn("ابدأ", v -> {
             if (swRun) { swAcc += now() - swStart; swRun = false; } else { swStart = now(); swRun = true; }
             swBtn.setText(swRun ? "إيقاف" : "ابدأ");
+            setOn(swBtn, swRun);
         });
         c.addView(row(swBtn, btn("تصفير", v -> {
-            swAcc = 0; swRun = false; swBtn.setText("ابدأ");
+            swAcc = 0; swRun = false; swBtn.setText("ابدأ"); setOn(swBtn, false);
         })));
 
-        c.addView(tv("مؤقت تنازلي", 13, 0xFF51D9E8));
+        c.addView(title("مؤقت تنازلي"));
         cdTv = tv("05:00", 24, Color.WHITE);
         c.addView(cdTv);
-        presetBtn = btn("5 د", v -> {
+        presetBtn = btn(presets[presetI] + " د", v -> {
             presetI = (presetI + 1) % presets.length;
             if (!cdRun) cdLeft = presets[presetI] * 60000L;
             presetBtn.setText(presets[presetI] + " د");
@@ -247,44 +376,49 @@ public class OverlayService extends Service {
             if (cdRun) { cdLeft = cdEnd - now(); cdRun = false; }
             else { if (cdLeft <= 0) cdLeft = presets[presetI] * 60000L; cdEnd = now() + cdLeft; cdRun = true; }
             cdBtn.setText(cdRun ? "إيقاف" : "ابدأ");
+            setOn(cdBtn, cdRun);
         });
         c.addView(row(presetBtn, cdBtn, btn("تصفير", v -> {
-            cdRun = false; cdLeft = presets[presetI] * 60000L; cdBtn.setText("ابدأ");
+            cdRun = false; cdLeft = presets[presetI] * 60000L; cdBtn.setText("ابدأ"); setOn(cdBtn, false);
         })));
 
         c.addView(row(btn("إخفاء", v -> togglePanel()), btn("❌ إنهاء", v -> stopSelf())));
         panel.addView(c);
-        pp = new WindowManager.LayoutParams(dp(230), dp(320), type(),
+        pp = new WindowManager.LayoutParams(dp(240), dp(400), type(),
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         pp.gravity = Gravity.TOP | Gravity.LEFT;
+        cdLeft = presets[presetI] * 60000L;
     }
 
     void togglePanel() {
         try {
             if (panelOn) { wm.removeView(panel); panelOn = false; return; }
             DisplayMetrics dm = getResources().getDisplayMetrics();
-            int pw = dp(230);
+            int pw = dp(240);
             pp.width = pw;
-            pp.height = Math.min(dp(320), dm.heightPixels - dp(24));
-            int bw = bubble.getWidth() > 0 ? bubble.getWidth() : dp(48);
+            pp.height = Math.min(dp(400), dm.heightPixels - dp(24));
+            int bw = bubble.getWidth() > 0 ? bubble.getWidth() : dp(52);
             int x = bp.x + bw + dp(6);
             if (x + pw > dm.widthPixels) x = bp.x - pw - dp(6);
             pp.x = Math.max(0, x);
             pp.y = Math.max(0, Math.min(bp.y, dm.heightPixels - pp.height - dp(12)));
             wm.addView(panel, pp);
             panelOn = true;
+            update();
         } catch (Exception e) { }
     }
 
     void applyCross() {
         cross.style = style;
         cross.color = colors[colorI];
+        cross.setAlpha(alpha / 100f);
         cp.width = dp(size);
         cp.height = dp(size);
         cp.x = ox;
         cp.y = oy;
         cross.invalidate();
         crossBtn.setText(crossOn ? "المؤشر: شغّال" : "المؤشر: إيقاف");
+        setOn(crossBtn, crossOn);
         try {
             if (crossOn) {
                 if (cross.getParent() == null) wm.addView(cross, cp);
@@ -293,6 +427,8 @@ public class OverlayService extends Service {
                 wm.removeView(cross);
             }
         } catch (Exception e) { }
+        sp.edit().putInt("c_style", style).putInt("c_size", size).putInt("c_color", colorI)
+                .putInt("c_ox", ox).putInt("c_oy", oy).putInt("c_alpha", alpha).apply();
     }
 
     String fmt(long ms, boolean cs) {
@@ -303,22 +439,25 @@ public class OverlayService extends Service {
 
     final Runnable tick = new Runnable() {
         @Override
-        public void run() { update(); h.postDelayed(this, 200); }
+        public void run() { update(); h.postDelayed(this, panelOn ? 50 : 250); }
     };
 
     void update() {
         long n = now();
         long sw = swAcc + (swRun ? n - swStart : 0);
-        swTv.setText(fmt(sw, true));
         long left = cdRun ? cdEnd - n : cdLeft;
         if (cdRun && left <= 0) {
             cdRun = false;
             cdLeft = presets[presetI] * 60000L;
             left = cdLeft;
             cdBtn.setText("ابدأ");
+            setOn(cdBtn, false);
             alarm();
         }
-        cdTv.setText(fmt(left, false));
+        if (panelOn) {
+            swTv.setText(fmt(sw, true));
+            cdTv.setText(fmt(left, false));
+        }
         String bt = cdRun ? fmt(left, false) : swRun ? fmt(sw, false) : "🎮";
         if (!bt.contentEquals(bubble.getText())) bubble.setText(bt);
     }
@@ -333,6 +472,7 @@ public class OverlayService extends Service {
     @Override
     public void onDestroy() {
         h.removeCallbacks(tick);
+        try { sp.unregisterOnSharedPreferenceChangeListener(spl); } catch (Exception e) { }
         try { wm.removeView(bubble); } catch (Exception e) { }
         try { if (panelOn) wm.removeView(panel); } catch (Exception e) { }
         try { if (cross.getParent() != null) wm.removeView(cross); } catch (Exception e) { }
